@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from .api.routes import contact_routes
+from .api.routes import contact_routes, auth_routes, settings_routes, content_routes
 from .core.config import settings
-from app.core.database import init_db, test_db_connection
+from app.core.database import test_db_connection
+from app.db import init_db
+from app.core.middleware import AuthenticationMiddleware, SecurityHeadersMiddleware, RequestLoggingMiddleware  # Import our middleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +20,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Configure CORS
+# Configure CORS (must be added first)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
@@ -27,7 +29,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add our custom middleware (order matters - add in reverse order of execution)
+app.add_middleware(SecurityHeadersMiddleware)  # Last to execute
+app.add_middleware(RequestLoggingMiddleware)   # Second to execute  
+app.add_middleware(AuthenticationMiddleware)   # First to execute
+
+# Include routers
 app.include_router(contact_routes.router, prefix="/api", tags=["contact"])
+app.include_router(auth_routes.router, prefix="/api", tags=["auth"])
+app.include_router(settings_routes.router, prefix="/api", tags=["settings"])
+app.include_router(content_routes.router, prefix="/api", tags=["content"])
 
 
 
@@ -72,6 +83,34 @@ async def database_status():
             "status": "error"
         }
 
+# Protected endpoint example (requires authentication)
+@app.get("/api/protected")
+async def protected_endpoint(request):
+    """Example protected endpoint - requires valid JWT token"""
+    user = request.state.user  # User added by AuthenticationMiddleware
+    return {
+        "message": "This is a protected endpoint",
+        "user": {
+            "email": user.email,
+            "role": user.role,
+            "full_name": user.full_name
+        }
+    }
+
+# Admin-only endpoint example
+@app.get("/api/admin/status")
+async def admin_status(request):
+    """Example admin-only endpoint"""
+    user = request.state.user
+    return {
+        "message": "Admin access granted",
+        "admin": {
+            "email": user.email,
+            "role": user.role,
+            "permissions": "full_access"
+        }
+    }
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
@@ -82,13 +121,23 @@ async def startup_event():
     logger.info("Testing database connection...")
     if test_db_connection():
         logger.info("✅ Database connection successful")
-        logger.info("Database initialization ready (models pending)")
+        
+        # Initialize database and create super admin
+        try:
+            logger.info("🔧 Initializing database and creating super admin...")
+            init_db()
+            logger.info("✅ Database initialization completed")
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}")
+            
     else:
         logger.error("❌ Database connection failed")
     
     logger.info(f"📊 Project: {settings.PROJECT_NAME}")
-    logger.info(f"🗄️  Database: {settings.DB_NAME}")
+    logger.info(f"🗄️ Database: {settings.DB_NAME}")
     logger.info(f"🌐 Server: {settings.SERVER_HOST}")
+    logger.info(f"👤 Super Admin: {settings.FIRST_SUPERUSER}")
+    logger.info("🔐 Authentication middleware enabled")
     logger.info("🎉 AI Services Platform API startup complete!")
 
 @app.on_event("shutdown")
