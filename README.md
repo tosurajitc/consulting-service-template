@@ -67,8 +67,11 @@ The platform ships a **three-tier pricing model** (Free Starter → Pro Founder 
 
 ### Admin Panel (`/admin`)
 
+The admin panel uses the same clean **white + `primary-600` blue** visual theme as the public landing page — consistent typography, white card surfaces, `gray-50` backgrounds, and blue accent colours throughout.
+
 | Section | Description |
 |---------|-------------|
+| `/admin/login` | Admin-only sign-in page (email + password); redirects to dashboard on success |
 | `/admin` | Overview dashboard — Total Users, Active Founders, AI Queries, Monthly Revenue |
 | `/admin/users` | User management (roles: `User`, `Founder`, `Admin`, `Enterprise`) |
 | `/admin/content` | Offer management — create/edit/delete offers via `/api/content/offers`; Playbooks tab |
@@ -80,9 +83,9 @@ The platform ships a **three-tier pricing model** (Free Starter → Pro Founder 
 ### Auth System
 
 - **OAuth-only** registration for regular users (Google, Microsoft, GitHub, LinkedIn)
-- **Email + password** login only for the seeded super-admin account
-- JWT tokens (HS256) with configurable expiry
-- Role-based access control enforced at both middleware and route level
+- **Email + password** login only for the seeded super-admin account (`/admin/login`)
+- JWT tokens (HS256) stored as an **httpOnly cookie** set by the backend; also written to `document.cookie` on the Next.js origin so the middleware can read it for route protection
+- Role-based access control enforced at both Next.js middleware and FastAPI route level
 
 ---
 
@@ -95,7 +98,7 @@ The platform ships a **three-tier pricing model** (Free Starter → Pro Founder 
 | Language | Python 3.12 |
 | Web framework | FastAPI 0.141 |
 | ORM | SQLAlchemy 2.0 (async-ready) |
-| Migrations | Alembic 1.20 (configured; migration scripts not yet generated) |
+| Migrations | Alembic 1.20 — configured and initialised; initial migration script generated |
 | Database | PostgreSQL 14+ (`ai_services_platform` DB) |
 | Auth | `python-jose` (JWT HS256) + `passlib`/`bcrypt` for password hashing |
 | OAuth | `httpx` (direct token exchange with Google / Microsoft / GitHub / LinkedIn) |
@@ -134,14 +137,16 @@ The platform ships a **three-tier pricing model** (Free Starter → Pro Founder 
 ## Project Structure
 
 ```
-ai-services-website/
+one-person-company/
 ├── frontend/
 │   ├── app/
 │   │   ├── page.js                    # Home page
 │   │   ├── layout.js                  # Root layout + SEO metadata
 │   │   ├── header.js / footer.js      # Global nav + footer (config-driven)
-│   │   ├── admin/                     # Admin panel
+│   │   ├── admin/                     # Admin panel (white/blue landing-page theme)
+│   │   │   ├── layout.js              # Admin-specific layout wrapper
 │   │   │   ├── page.js                # Dashboard overview
+│   │   │   ├── login/                 # Admin sign-in (email + password)
 │   │   │   ├── users/                 # User management
 │   │   │   ├── content/               # Offer management
 │   │   │   ├── analytics/             # Business intelligence
@@ -176,13 +181,13 @@ ai-services-website/
 │   │   ├── main.py                    # FastAPI app, middleware, startup events
 │   │   ├── api/
 │   │   │   ├── routes/
-│   │   │   │   ├── auth_routes.py
+│   │   │   │   ├── auth_routes.py     # Login, register, OAuth, me, verify, logout
 │   │   │   │   ├── content_routes.py  # /api/content/offers (CRUD)
-│   │   │   │   ├── community_routes.py
-│   │   │   │   ├── resource_routes.py # /api/content-assets/public
-│   │   │   │   ├── page_routes.py
-│   │   │   │   ├── settings_routes.py # /api/settings/public + admin CRUD
-│   │   │   │   └── contact_routes.py
+│   │   │   │   ├── community_routes.py # /api/community/* (threads, events, members)
+│   │   │   │   ├── resource_routes.py  # /api/resources (playbooks)
+│   │   │   │   ├── page_routes.py      # /api/pages (CMS pages)
+│   │   │   │   ├── settings_routes.py  # /api/settings/public + admin CRUD
+│   │   │   │   └── contact_routes.py   # /api/contact
 │   │   │   └── dependencies.py
 │   │   ├── core/
 │   │   │   ├── database.py            # Engine, SessionLocal, Base, get_db, init_db
@@ -198,8 +203,13 @@ ai-services-website/
 │   │   │   └── contact.py             # ContactSubmission
 │   │   ├── schemas/                   # Pydantic request/response schemas
 │   │   ├── services/                  # Business logic layer
-│   │   └── db/                        # DB init helpers (see gotchas)
-│   ├── alembic/                       # Migration environment
+│   │   └── db/                        # DB init helpers + playbook seed data
+│   ├── alembic/                       # Migration environment (configured + initialised)
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/
+│   │       └── aabc0f0a2cfd_*.py      # Rename Course→Offer, Resource→ContentAsset
+│   ├── push_config.py                 # Utility: push site.config.js defaults to DB
 │   ├── tests/                         # pytest test suite
 │   ├── config.py                      # Settings via pydantic-settings
 │   └── requirements.txt
@@ -224,7 +234,7 @@ ai-services-website/
 | `CommunitySettings` | `community_settings` | Admin-controlled community config (rules, categories, feature flags) |
 | `SiteSetting` | `site_settings` | JSONB key-value store for live site configuration (brand, pricing, etc.) |
 | `ContactSubmission` | `contacts` | Contact form submissions |
-| `Page` | `pages` | CMS-managed pages |
+| `Page` | `pages` | CMS-managed pages (header nav flag controls visibility in nav) |
 
 ---
 
@@ -234,12 +244,13 @@ ai-services-website/
 
 | Method | Path | Access | Description |
 |--------|------|--------|-------------|
-| `POST` | `/api/auth/login` | Public | Super-admin email/password login |
+| `POST` | `/api/auth/login` | Public | Super-admin email/password login — sets httpOnly `token` cookie + returns JWT |
 | `POST` | `/api/auth/register` | Public | Register via OAuth token exchange |
 | `POST` | `/api/auth/logout` | Auth | Clear auth cookie |
-| `GET` | `/api/auth/verify` | Auth | Verify JWT validity |
-| `GET` | `/api/auth/me` | Auth | Get current user profile |
+| `GET` | `/api/auth/verify` | Auth | Verify JWT validity (Bearer header) |
+| `GET` | `/api/auth/me` | Auth | Get current user profile (cookie or Bearer) |
 | `POST` | `/api/auth/oauth/callback` | Public | Exchange OAuth code → JWT |
+| `POST` | `/api/auth/change-password` | Admin | Change the admin account password |
 
 ### Offers (Content)
 
@@ -255,8 +266,10 @@ ai-services-website/
 | Method | Path | Access | Description |
 |--------|------|--------|-------------|
 | `GET` | `/api/content-assets/public` | Public | List published content assets |
-| `GET` | `/api/resources` | Public | List playbooks/guides (filterable) |
+| `GET` | `/api/resources` | Public | List playbooks/guides (filterable by category, content type, search) |
 | `POST` | `/api/resources` | Admin | Create a resource |
+| `PUT` | `/api/resources/{id}` | Admin | Update a resource |
+| `DELETE` | `/api/resources/{id}` | Admin | Delete a resource |
 
 ### Community
 
@@ -264,17 +277,30 @@ ai-services-website/
 |--------|------|--------|-------------|
 | `GET` | `/api/community/threads` | Public | List forum threads |
 | `POST` | `/api/community/threads` | Auth | Create a thread |
-| `GET` | `/api/community/events` | Public | List events |
+| `GET` | `/api/community/threads/{id}` | Public | Get thread + posts |
+| `POST` | `/api/community/threads/{id}/posts` | Auth | Reply to a thread |
+| `GET` | `/api/community/events` | Public | List upcoming events |
 | `POST` | `/api/community/events` | Admin | Create an event |
 | `GET` | `/api/community/members` | Auth | List community members |
+| `GET` | `/api/community/settings` | Public | Get community config |
+
+### Pages (CMS)
+
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| `GET` | `/api/pages/public` | Public | List published pages (used by header nav) |
+| `GET` | `/api/pages` | Admin | List all pages |
+| `POST` | `/api/pages` | Admin | Create a page |
+| `PUT` | `/api/pages/{id}` | Admin | Update a page |
+| `DELETE` | `/api/pages/{id}` | Admin | Delete a page |
 
 ### Settings
 
 | Method | Path | Access | Description |
 |--------|------|--------|-------------|
 | `GET` | `/api/settings/public` | Public | Get all public settings (used by `useSiteConfig()`) |
-| `GET` | `/api/settings/{key}` | Public | Get a specific settings group |
-| `PUT` | `/api/settings/{key}` | Admin | Update a settings group |
+| `GET` | `/api/settings` | Admin | Get full settings including private keys |
+| `PUT` | `/api/settings` | Admin | Update one or more settings keys |
 
 ### AI Genie *(not yet implemented)*
 
@@ -288,6 +314,7 @@ ai-services-website/
 |--------|------|--------|-------------|
 | `POST` | `/api/contact` | Public | Submit contact form |
 | `GET` | `/health` | Public | Health check |
+| `GET` | `/api/db-status` | Public | Database connection status |
 
 Full interactive docs: **http://localhost:8000/docs**
 
@@ -326,8 +353,11 @@ copy .env.example .env          # Windows
 # cp .env.example .env          # macOS / Linux
 # Edit .env — fill in DB credentials, SECRET_KEY, and OAuth app credentials
 
+# Run Alembic migrations (creates tables with migration history)
+alembic upgrade head
+
 # Start the server
-# Auto-creates DB tables and seeds super-admin on first run
+# Auto-seeds super-admin and default site settings on first run
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -343,13 +373,27 @@ npm run dev
 
 | URL | Description |
 |-----|-------------|
-| http://localhost:3000 | Frontend application |
+| http://localhost:3000 | Frontend application (landing page) |
+| http://localhost:3000/admin/login | Admin sign-in |
 | http://localhost:8000/docs | FastAPI Swagger UI |
 | http://localhost:8000/redoc | FastAPI ReDoc |
 
 ### First Login
 
-The super-admin account is seeded automatically from `SUPER_ADMIN_EMAIL` in `.env` (defaults to `admin@aiservices.com`, password set via `FIRST_SUPERUSER_PASSWORD`). Use the `/login` page with email + password. All other users sign in via OAuth.
+The super-admin account is seeded automatically from `SUPER_ADMIN_EMAIL` in `.env` (defaults to `admin@aiservices.com`, password set via `FIRST_SUPERUSER_PASSWORD`).
+
+Navigate to **`/admin/login`** and sign in with the super-admin email and password. The login sets a `token` cookie on both the backend origin and the Next.js origin so the middleware can protect subsequent admin routes correctly.
+
+All other users sign in via OAuth at `/login`.
+
+### Pushing Default Config to the Database
+
+After the first run, push the `site.config.js` defaults into the `site_settings` DB table so the admin Settings page has data to work with:
+
+```bash
+cd backend
+python push_config.py
+```
 
 ### Site Configuration
 
@@ -357,8 +401,6 @@ All brand copy, pricing, features, and nav labels are controlled from two places
 
 1. **`frontend/site.config.js`** — static fallback defaults (brand name, hero copy, features, pricing, etc.)
 2. **`site_settings` DB table** — admin edits via `/admin/settings` write JSONB rows here and override the static config at runtime via `/api/settings/public`
-
-To update the DB values directly (e.g. after cloning to a fresh database), edit `site.config.js` and run the settings PUT endpoint, or use the Admin Settings page.
 
 ---
 
@@ -403,7 +445,7 @@ GROQ_API_KEY=
 
 The `docker-compose.yml` is currently a stub and does not define services. To run with Docker, the compose file needs:
 - A `postgres` service
-- A `backend` service (Dockerfile is in `backend/Dockerfile/`)
+- A `backend` service (Dockerfile in `backend/Dockerfile/`)
 - A `frontend` service
 
 Once configured:
@@ -419,17 +461,13 @@ docker compose up --build
 
 | Issue | Impact | Location |
 |-------|--------|----------|
-| **Dual DB session** | Dead duplicate code; only `core/database.py` is live | `app/db/session.py` vs `app/core/database.py` |
-| **`init_db` called twice** | Second call silently fails (missing `get_password_hash` export) | `app/main.py` startup + `app/db/__init__.py` |
-| **Token storage split** | Middleware reads cookie; app reads `localStorage` — route protection and UI auth state can desync | `middleware.js` vs `context/AuthContext.js` |
-| **User model dual Base** | Two `declarative_base()` declarations; both must be imported before `create_all` | `app/models/user.py` vs `app/core/database.py` |
+| **Token storage split** | Middleware reads cookie; app reads `localStorage` — route protection and UI auth state can desync. Admin login now writes to both, but regular OAuth login only writes `localStorage` | `middleware.js` vs `context/AuthContext.js` |
 | **`SECRET_KEY` not set** | All JWTs invalidated on every restart | `config.py` / `.env` |
-| **Alembic not configured** | Schema is managed via `create_all`; no migration history | `alembic.ini` |
-| **Docker Compose is empty** | Cannot containerise as-is | `docker-compose.yml` |
 | **`/api/chat` not implemented** | AI Genie live demo falls back to a graceful error message | `platform/industry-simulator/page.js` + missing `chat_routes.py` |
 | **Platform directory names are legacy** | Page directories still use original EdTech names (`skillgraph-engine` etc.) — nav and config now point to them correctly, but renaming would improve clarity | `frontend/app/platform/` |
 | **Public path prefix matching** | `startswith()` check makes all sub-paths of a route public | `AuthenticationMiddleware` |
 | **venv path is hardcoded** | `venv/Scripts/` launchers embed the creation-time absolute path — copying the project breaks them | Recreate with `py -3 -m venv venv` at the new location |
+| **Docker Compose is empty** | Cannot containerise as-is | `docker-compose.yml` |
 
 ---
 
@@ -445,9 +483,53 @@ The Groq SDK is installed but **not wired to any endpoint**. The AI Genie live d
 - Implement per-user query quotas matching pricing tiers
 - Persist chat history per user session
 
-### 2. Platform Route Rename (Low effort, high clarity)
+### 2. Auth Token Storage Unification
 
-The header Features dropdown, footer Platform links, and `site.config.js` feature cards **now all point to the correct existing routes** — the navigation is fully in sync with the pages. The directories still carry their original EdTech names (`skillgraph-engine`, `industry-simulator`, etc.) which is a cosmetic issue only. To clean up:
+The admin login page now writes the JWT to `document.cookie` on the Next.js origin so the middleware works correctly. Regular OAuth users still rely purely on `localStorage`. Unify both paths:
+
+- Standardise on **httpOnly cookies** for all auth flows (admin + OAuth)
+- Remove the `localStorage` fallback from `AuthContext.js`
+- Ensure logout clears both storage locations consistently
+
+### 3. Offer Builder — Wire Founder-Facing Flow
+
+The `/admin/content` page calls `/api/content/offers` correctly. The next step is the **founder-facing offer builder**:
+
+- Self-serve offer creation at `/dashboard/offers/new`
+- AI-generated offer copy from a plain-language description
+- Payment page with Stripe/Razorpay integration
+- Public offer landing page at `/{username}/{offer-slug}`
+
+### 4. Payments & Subscription Management
+
+The pricing page and plan structure are fully designed but **there is no payment integration**:
+
+- Integrate Stripe (international) or Razorpay (India)
+- `UserSubscription` model to track active plan, billing cycle, renewal date
+- Enforce tier-based feature gating in both API middleware and frontend UI
+- Webhook handler for subscription lifecycle events (renewal, cancellation, failure)
+
+### 5. Admin Analytics — Real Data
+
+`/admin/analytics` has a working UI but sample data is hardcoded. Connect it to real aggregation queries:
+
+- Daily/weekly active users, new signups, churn
+- Offer creation and sales funnel
+- Revenue by plan (post-payments integration)
+- AI Genie usage metrics (queries per user, topics)
+- Community engagement metrics
+
+### 6. Community — Wire Frontend to Backend
+
+The community models (`CommunityThread`, `CommunityPost`, `CommunityEvent`, `CommunityMember`) are fully built and the API routes exist. The frontend `/community` page exists. **They are not connected**:
+
+- Build thread list, thread detail, and reply composer views backed by the existing API
+- Implement event RSVP and attendee count updates
+- Moderation actions (hide post, ban member) available in models but not surfaced in admin UI
+
+### 7. Platform Route Rename (Low effort, high clarity)
+
+The header Features dropdown, footer Platform links, and `site.config.js` feature cards **now all point to the correct existing routes**. The directories still carry their original EdTech names which is cosmetic only. To clean up:
 
 ```
 platform/skillgraph-engine/    →  platform/website-builder/
@@ -458,59 +540,7 @@ platform/content-co-creation/  →  platform/content-studio/
 
 After renaming, update all `href` references in `header.js`, `site.config.js` (features + footerLinks), and any `<Link>` in the feature pages themselves.
 
-### 3. Offer Builder — Wire Frontend to Real API
-
-The `/admin/content` page now calls `/api/content/offers` correctly. The next step is building the **founder-facing offer builder**:
-
-- Self-serve offer creation flow at `/dashboard/offers/new`
-- AI-generated offer copy from a plain-language description
-- Payment page with Stripe/Razorpay integration
-- Public offer landing page at `/{username}/{offer-slug}`
-
-### 4. Auth Token Storage Unification
-
-The split between cookie-based (middleware) and `localStorage`-based (AuthContext) token storage is a reliability and security issue:
-
-- Standardise on **httpOnly cookies** (already partially in place via the backend `Set-Cookie` response)
-- Remove the `localStorage` fallback from `AuthContext.js`
-- Ensure logout clears both storage locations consistently
-
-### 5. Payments & Subscription Management
-
-The pricing page and plan structure are fully designed but **there is no payment integration**:
-
-- Integrate Stripe (international) or Razorpay (India)
-- `UserSubscription` model to track active plan, billing cycle, renewal date
-- Enforce tier-based feature gating in both API middleware and frontend UI
-- Webhook handler for subscription lifecycle events (renewal, cancellation, failure)
-
-### 6. Admin Analytics — Real Data
-
-`/admin/analytics` has a working UI but sample data is hardcoded. Connect it to real aggregation queries:
-
-- Daily/weekly active users, new signups, churn
-- Offer creation and sales funnel
-- Revenue by plan (post-payments integration)
-- AI Genie usage metrics (queries per user, topics)
-- Community engagement metrics
-
-### 7. Community — Wire Frontend to Backend
-
-The community models (`CommunityThread`, `CommunityPost`, `CommunityEvent`, `CommunityMember`) are fully built. The frontend `/community` page exists. **They are not connected**:
-
-- Build thread list, thread detail, and reply composer views backed by the existing API
-- Implement event RSVP and attendee count updates
-- Moderation actions (hide post, ban member) available in models but not surfaced in admin UI
-
-### 8. Alembic Migration Setup
-
-The app currently uses `create_all` directly — no migration history exists. Before any team collaboration or production deployment:
-
-- Initialise Alembic with `alembic init alembic` (directory exists, `alembic.ini` is configured)
-- Generate initial migration from current models
-- Add migration step to CI/CD pipeline
-
-### 9. Docker Compose
+### 8. Docker Compose
 
 Define services in `docker-compose.yml` so the full stack can be stood up with a single command:
 
@@ -522,7 +552,7 @@ services:
   nginx:     # reverse proxy (optional)
 ```
 
-### 10. Email Notifications
+### 9. Email Notifications
 
 Jinja2 is already a dependency (email templates implied):
 
@@ -532,11 +562,11 @@ Jinja2 is already a dependency (email templates implied):
 - Password-reset flow for the admin account
 - Event reminders for registered attendees
 
-### 11. Profile Page — API-Wired
+### 10. Profile Page — API-Wired
 
 `/profile/page.js` currently uses blank placeholder defaults. Wire it to `/api/auth/me` on mount and implement a `PUT /api/auth/me` endpoint to persist profile updates.
 
-### 12. SEO & Performance
+### 11. SEO & Performance
 
 - Implement `generateMetadata` on offer and resource pages for dynamic OG tags
 - Add structured data (`Product` schema.org) for offer pages
