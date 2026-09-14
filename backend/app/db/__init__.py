@@ -21,6 +21,15 @@ def create_tables() -> None:
         # Import all models so SQLAlchemy metadata is populated before create_all
         from app.models.user import User  # noqa: F401
         from app.models.contact import Contact  # noqa: F401
+        from app.models.site_settings import SiteSetting  # noqa: F401
+        from app.models.offer import Offer  # noqa: F401
+        from app.models.page import Page  # noqa: F401
+        from app.models.content_asset import ContentAsset  # noqa: F401
+        from app.models.resource import Resource  # noqa: F401
+        from app.models.community import (  # noqa: F401
+            CommunityThread, CommunityPost, CommunityMember,
+            CommunityEvent, CommunitySettings,
+        )
         Base.metadata.create_all(bind=engine)
         logger.info("✅ Database tables created successfully")
     except Exception as e:

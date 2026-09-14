@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from .api.routes import contact_routes, auth_routes, settings_routes, content_routes
+from .api.routes import contact_routes, auth_routes, settings_routes, content_routes, page_routes, resource_routes, community_routes
 from .core.config import settings
 from app.core.database import test_db_connection
 from app.db import init_db
@@ -39,6 +39,9 @@ app.include_router(contact_routes.router, prefix="/api", tags=["contact"])
 app.include_router(auth_routes.router, prefix="/api", tags=["auth"])
 app.include_router(settings_routes.router, prefix="/api", tags=["settings"])
 app.include_router(content_routes.router, prefix="/api", tags=["content"])
+app.include_router(page_routes.router, prefix="/api", tags=["pages"])
+app.include_router(resource_routes.router, prefix="/api", tags=["resources"])
+app.include_router(community_routes.router, prefix="/api", tags=["community"])
 
 
 

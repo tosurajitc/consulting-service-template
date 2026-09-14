@@ -8,6 +8,8 @@ _env
 # Dependencies
 node_modules/
 __pycache__/
+*.pyc
+backend/venv/
 
 # Build outputs
 .next/
@@ -25,3 +27,9 @@ config.py
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Logs
+frontend-log.txt
+
+# Bob AI assistant
+.bob/

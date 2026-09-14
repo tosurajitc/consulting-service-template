@@ -1,20 +1,20 @@
 """
 Content Management API Routes
-GET    /api/content/courses       — list all courses (admin)
-POST   /api/content/courses       — create a course (admin)
-GET    /api/content/courses/:id   — get a single course (admin)
-PUT    /api/content/courses/:id   — update a course (admin)
-DELETE /api/content/courses/:id   — delete a course (admin)
+GET    /api/content/offers       — list all offers (admin)
+POST   /api/content/offers       — create an offer (admin)
+GET    /api/content/offers/:id   — get a single offer (admin)
+PUT    /api/content/offers/:id   — update an offer (admin)
+DELETE /api/content/offers/:id   — delete an offer (admin)
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin_user
 from app.models.user import User
-from app.models.course import Course, CourseStatus
+from app.models.offer import Offer, OfferStatus, OfferType
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -23,22 +23,24 @@ router = APIRouter(prefix="/content", tags=["content"])
 # Pydantic schemas (inline — no separate schemas file needed)
 # ---------------------------------------------------------------------------
 
-class CourseCreate(BaseModel):
+class OfferCreate(BaseModel):
     title: str
     instructor: str
     category: Optional[str] = None
-    status: CourseStatus = CourseStatus.DRAFT
+    status: OfferStatus = OfferStatus.DRAFT
+    offer_type: OfferType = OfferType.COURSE
     description: Optional[str] = None
     duration: Optional[str] = None
     lessons_count: int = 0
     thumbnail_url: Optional[str] = None
 
 
-class CourseUpdate(BaseModel):
+class OfferUpdate(BaseModel):
     title: Optional[str] = None
     instructor: Optional[str] = None
     category: Optional[str] = None
-    status: Optional[CourseStatus] = None
+    status: Optional[OfferStatus] = None
+    offer_type: Optional[OfferType] = None
     description: Optional[str] = None
     duration: Optional[str] = None
     lessons_count: Optional[int] = None
@@ -49,105 +51,106 @@ class CourseUpdate(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/courses")
-async def list_courses(
+@router.get("/offers")
+async def list_offers(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Return all courses ordered by creation date desc."""
-    courses = db.query(Course).order_by(Course.created_at.desc()).all()
-    return [c.to_dict() for c in courses]
+    """Return all offers ordered by creation date desc."""
+    offers = db.query(Offer).order_by(Offer.created_at.desc()).all()
+    return [o.to_dict() for o in offers]
 
 
-@router.post("/courses", status_code=status.HTTP_201_CREATED)
-async def create_course(
-    payload: CourseCreate,
+@router.post("/offers", status_code=status.HTTP_201_CREATED)
+async def create_offer(
+    payload: OfferCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Create a new course."""
-    course = Course(
+    """Create a new offer."""
+    offer = Offer(
         title=payload.title,
         instructor=payload.instructor,
         category=payload.category,
         status=payload.status,
+        offer_type=payload.offer_type,
         description=payload.description,
         duration=payload.duration,
         lessons_count=payload.lessons_count,
         thumbnail_url=payload.thumbnail_url,
     )
-    db.add(course)
+    db.add(offer)
     try:
         db.commit()
-        db.refresh(course)
+        db.refresh(offer)
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create course: {str(e)}",
+            detail=f"Failed to create offer: {str(e)}",
         )
-    return course.to_dict()
+    return offer.to_dict()
 
 
-@router.get("/courses/{course_id}")
-async def get_course(
-    course_id: int,
+@router.get("/offers/{offer_id}")
+async def get_offer(
+    offer_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Get a single course by ID."""
-    course = db.query(Course).filter(Course.id == course_id).first()
-    if not course:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    return course.to_dict()
+    """Get a single offer by ID."""
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
+    return offer.to_dict()
 
 
-@router.put("/courses/{course_id}")
-async def update_course(
-    course_id: int,
-    payload: CourseUpdate,
+@router.put("/offers/{offer_id}")
+async def update_offer(
+    offer_id: int,
+    payload: OfferUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Update an existing course."""
-    course = db.query(Course).filter(Course.id == course_id).first()
-    if not course:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+    """Update an existing offer."""
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(course, field, value)
+        setattr(offer, field, value)
 
     try:
         db.commit()
-        db.refresh(course)
+        db.refresh(offer)
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update course: {str(e)}",
+            detail=f"Failed to update offer: {str(e)}",
         )
-    return course.to_dict()
+    return offer.to_dict()
 
 
-@router.delete("/courses/{course_id}")
-async def delete_course(
-    course_id: int,
+@router.delete("/offers/{offer_id}")
+async def delete_offer(
+    offer_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Delete a course."""
-    course = db.query(Course).filter(Course.id == course_id).first()
-    if not course:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+    """Delete an offer."""
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
 
-    db.delete(course)
+    db.delete(offer)
     try:
         db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete course: {str(e)}",
+            detail=f"Failed to delete offer: {str(e)}",
         )
-    return {"success": True, "message": "Course deleted successfully."}
+    return {"success": True, "message": "Offer deleted successfully."}

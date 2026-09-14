@@ -1,0 +1,193 @@
+import { NextResponse } from 'next/server'
+import { jwtDecode } from 'jwt-decode'
+
+// Routes that require authentication
+const PROTECTED_ROUTES = [
+  '/dashboard',
+  '/profile',
+  '/settings',
+  '/platform',
+]
+
+// Routes that require admin access
+const ADMIN_ROUTES = [
+  '/admin',
+]
+
+// Admin routes that are publicly accessible (no auth needed)
+const ADMIN_PUBLIC_ROUTES = [
+  '/admin/login',
+]
+
+// Public routes (no authentication required)
+const PUBLIC_ROUTES = [
+  '/',
+  '/login',
+  '/signup',
+  '/contact',
+  '/resources',
+  '/pricing',
+  '/about',
+  '/admin/login',
+]
+
+// Routes that authenticated users shouldn't access (redirect to dashboard)
+const AUTH_REDIRECT_ROUTES = [
+  '/login',
+  '/signup',
+]
+
+export function middleware(request) {
+  const { pathname } = request.nextUrl
+  const token = request.cookies.get('token')?.value
+
+  // Get user info from token
+  let user = null
+  let isAuthenticated = false
+  
+  if (token) {
+    try {
+      const decoded = jwtDecode(token)
+      const currentTime = Date.now() / 1000
+      
+      // Check if token is expired
+      if (decoded.exp > currentTime) {
+        user = decoded
+        isAuthenticated = true
+      }
+    } catch (error) {
+      console.error('Token decode error:', error)
+      // Invalid token, clear it
+      const response = NextResponse.next()
+      response.cookies.delete('token')
+      return response
+    }
+  }
+
+  // Helper functions
+  const isProtectedRoute = () => PROTECTED_ROUTES.some(route => pathname.startsWith(route))
+  const isAdminRoute = () => ADMIN_ROUTES.some(route => pathname.startsWith(route))
+  const isPublicRoute = () => PUBLIC_ROUTES.some(route => pathname === route || pathname.startsWith(route))
+  const isAuthRedirectRoute = () => AUTH_REDIRECT_ROUTES.some(route => pathname === route)
+  const isAdmin = () => user && (user.role === 'admin' || user.role === 'super_admin')
+  const isSuperAdmin = () => user && user.role === 'super_admin'
+
+  // 1. Handle authentication redirects (logged-in users accessing login/signup)
+  if (isAuthenticated && isAuthRedirectRoute()) {
+    // Redirect based on user role
+    if (isAdmin()) {
+      return NextResponse.redirect(new URL('/admin', request.url))
+    }
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
+  // 2. Handle admin routes
+  if (isAdminRoute()) {
+    // Allow public admin routes (e.g. /admin/login) through without auth
+    if (ADMIN_PUBLIC_ROUTES.some(route => pathname.startsWith(route))) {
+      return NextResponse.next()
+    }
+
+    if (!isAuthenticated) {
+      // Redirect to admin login
+      return NextResponse.redirect(new URL('/admin/login', request.url))
+    }
+    
+    if (!isAdmin()) {
+      // Regular user trying to access admin area
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+    
+    // Admin access granted, continue
+    return NextResponse.next()
+  }
+
+  // 3. Handle protected routes (user dashboard, profile, etc.)
+  if (isProtectedRoute()) {
+    if (!isAuthenticated) {
+      // Store the attempted URL for redirect after login
+      const loginUrl = new URL('/login', request.url)
+      loginUrl.searchParams.set('redirect', pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+    
+    // Authenticated user, continue
+    return NextResponse.next()
+  }
+
+  // 4. Handle public routes
+  if (isPublicRoute()) {
+    return NextResponse.next()
+  }
+
+  // 5. Handle unknown routes
+  // For any other route, check if user is authenticated
+  if (!isAuthenticated) {
+    // Unknown route, not authenticated - redirect to login
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('redirect', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  // Authenticated user accessing unknown route - allow it
+  return NextResponse.next()
+}
+
+// Configure which routes this middleware runs on
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public assets
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico|public).*)',
+  ],
+}
+
+// Helper function to check if request is from admin subdomain/path
+function isAdminRequest(request) {
+  const { hostname, pathname } = request.nextUrl
+  
+  // Check for admin subdomain
+  if (hostname.startsWith('admin.')) {
+    return true
+  }
+  
+  // Check for admin path
+  if (pathname.startsWith('/admin')) {
+    return true
+  }
+  
+  return false
+}
+
+// Helper function to get redirect URL after successful login
+export function getPostLoginRedirect(user, requestedPath = null) {
+  // If there's a requested path, use it (but ensure it's appropriate for user role)
+  if (requestedPath) {
+    // Admin trying to access user area - redirect to admin dashboard
+    if ((user.role === 'admin' || user.role === 'super_admin') && 
+        !requestedPath.startsWith('/admin')) {
+      return '/admin'
+    }
+    
+    // Regular user trying to access admin area - redirect to user dashboard
+    if (user.role === 'user' && requestedPath.startsWith('/admin')) {
+      return '/dashboard'
+    }
+    
+    // Appropriate path for user role
+    return requestedPath
+  }
+  
+  // Default redirects based on role
+  if (user.role === 'admin' || user.role === 'super_admin') {
+    return '/admin'
+  }
+  
+  return '/dashboard'
+}
